@@ -19,7 +19,9 @@ configuration = Configuration(access_token=CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(CHANNEL_SECRET)
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-# 💡 親切且會柔性引導的 AI 客服 Prompt
+# 💡 建立一個字典，用來暫存每個使用者的歷史對話紀錄
+user_history = {}
+
 SYSTEM_PROMPT = """你現在是『外牆工程與修繕專業團隊』的專屬 AI 智慧秘書。你的個性非常親切、幽默、熱情且好相處！
 
 【對答風格與態度】
@@ -56,18 +58,33 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
+    user_id = event.source.user_id  # 抓取傳訊息者的 LINE ID
     user_message = event.message.text
     ai_reply = ""
+
+    # 1. 如果是新訪客，初始化對話歷史清單
+    if user_id not in user_history:
+        user_history[user_id] = []
+
+    # 2. 將顧客最新傳的訊息加入歷史紀錄
+    user_history[user_id].append({"role": "user", "content": user_message})
+
+    # 3. 限制只保留最近 10 則訊息（避免對話過長導致 API 費用暴增）
+    user_history[user_id] = user_history[user_id][-10:]
+
+    # 4. 打包完整的對話上下文發送給 OpenAI
+    messages_to_send = [{"role": "system", "content": SYSTEM_PROMPT}] + user_history[user_id]
 
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_message}
-            ]
+            messages=messages_to_send
         )
         ai_reply = response.choices[0].message.content
+        
+        # 5. 將 AI 的回覆也紀錄進歷史，供下一輪對話使用
+        user_history[user_id].append({"role": "assistant", "content": ai_reply})
+
     except Exception as e:
         ai_reply = f"AI 暫時無法回應：{str(e)}"
 
